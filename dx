@@ -1,0 +1,100 @@
+#!/bin/bash
+
+# dx - Developer shell wrapper for Docker/Container
+# Supports both Docker and Apple's container command
+
+set -e
+
+IMAGE_NAME="dx:latest"
+WORKSPACE="/workspace"
+
+# Detect which container runtime is available
+detect_runtime() {
+    if command -v container &> /dev/null; then
+        echo "container"
+    elif command -v docker &> /dev/null; then
+        echo "docker"
+    else
+        echo "error: neither 'container' nor 'docker' command found" >&2
+        echo "Please install Docker Desktop or Apple's container tools" >&2
+        exit 1
+    fi
+}
+
+# Check if the image exists
+check_image() {
+    local runtime=$1
+
+    if [ "$runtime" = "container" ]; then
+        container image ls | grep -q "^${IMAGE_NAME}" 2>/dev/null
+    else
+        docker image ls | grep -q "^dx" 2>/dev/null
+    fi
+}
+
+# Build the image if it doesn't exist
+ensure_image() {
+    local runtime=$1
+
+    if ! check_image "$runtime"; then
+        echo "Image '${IMAGE_NAME}' not found. Building..."
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+        if [ "$runtime" = "container" ]; then
+            container build -t "${IMAGE_NAME}" "$SCRIPT_DIR"
+        else
+            docker build -t "${IMAGE_NAME}" "$SCRIPT_DIR"
+        fi
+    fi
+}
+
+# Run the container
+run_container() {
+    local runtime=$1
+    shift
+
+    # Get current directory
+    local current_dir="$(pwd)"
+
+    # Build run command based on runtime
+    local run_cmd=""
+
+    if [ "$runtime" = "container" ]; then
+        run_cmd="container run"
+    else
+        run_cmd="docker run"
+    fi
+
+    # Common options
+    local common_opts=(
+        "--rm"
+        "-it"
+        "-v" "${current_dir}:${WORKSPACE}"
+        "-w" "${WORKSPACE}"
+    )
+
+    # Optionally mount .gitconfig and .ssh if they exist
+    if [ -f "$HOME/.gitconfig" ]; then
+        common_opts+=("-v" "$HOME/.gitconfig:/root/.gitconfig:ro")
+    fi
+
+    if [ -d "$HOME/.ssh" ]; then
+        common_opts+=("-v" "$HOME/.ssh:/root/.ssh:ro")
+    fi
+
+    # If arguments provided, run as command; otherwise start zsh
+    if [ $# -eq 0 ]; then
+        $run_cmd "${common_opts[@]}" "${IMAGE_NAME}" /bin/zsh
+    else
+        $run_cmd "${common_opts[@]}" "${IMAGE_NAME}" /bin/zsh -c "$*"
+    fi
+}
+
+# Main execution
+main() {
+    local runtime=$(detect_runtime)
+    ensure_image "$runtime"
+    run_container "$runtime" "$@"
+}
+
+main "$@"
