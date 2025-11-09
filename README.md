@@ -23,6 +23,7 @@ The `dx` script automatically detects and works with both Docker and Apple's `co
 - **dx** - Shell script to run the container interactively or execute commands
 - **build.sh** - Helper script to explicitly build the image
 - **.dockerignore** - Optimizes Docker build context
+- **LICENSE** - MIT License
 
 ## Contents
 
@@ -55,6 +56,7 @@ Base Docker image: Debian Bookworm
 - **tmux** - Terminal multiplexer
 - **yq** - YAML processor
 - **zoxide** - Smarter cd command
+- **procps** - Process utilities (ps, top, vmstat, etc.)
 
 ### Shell Configuration
 
@@ -75,7 +77,31 @@ Base Docker image: Debian Bookworm
 ./dx
 ```
 
-Starts a zsh shell with your current directory mounted at `/workspace`. Your `.gitconfig` and `.ssh` directory are automatically mounted (read-only) if they exist.
+Starts a zsh shell with your current directory mounted at `/workspace`.
+
+**Automatic mounts from host:**
+- `.gitconfig` - Read-only (if exists)
+- `.ssh` - Read-only (if exists)
+- `.config` - Read-only (if exists)
+- `.claude` - Read-write for Claude Code settings (always created/mounted)
+- `.claude.json` - Read-write (if exists)
+- `.cache` - Read-write for caching (if exists)
+- `/etc/localtime` - For timezone (auto-detected)
+
+**Note for Apple's `container` users:** Since Apple's container doesn't support file mounts, the script automatically uses a `~/.dx` staging directory to copy files (`.gitconfig`, `.claude.json`, `/etc/localtime`) into the container at startup.
+
+**Timezone:** The container automatically uses your system timezone. You can override this by setting the `TZ` environment variable:
+
+```bash
+TZ=America/New_York ./dx
+```
+
+**Claude Code Authentication:** If you have `ANTHROPIC_API_KEY` set in your environment, it will be automatically passed through to the container. Make sure to export it before running `./dx`:
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+./dx
+```
 
 ### Run Commands
 
