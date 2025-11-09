@@ -26,7 +26,7 @@ check_image() {
     local runtime=$1
 
     if [ "$runtime" = "container" ]; then
-        container image ls | grep -q "^${IMAGE_NAME}" 2>/dev/null
+        container image ls | grep -q "dx.*latest" 2>/dev/null
     else
         docker image ls | grep -q "^dx" 2>/dev/null
     fi

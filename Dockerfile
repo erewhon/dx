@@ -4,7 +4,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PATH=/root/.cargo/bin:/usr/local/go/bin:/root/.local/bin:$PATH
+    PATH=/root/.bun/bin:/root/.cargo/bin:/usr/local/go/bin:/root/.local/bin:$PATH
 
 # Install base dependencies
 RUN apt-get update && apt-get install -y \
@@ -26,6 +26,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm typescript ts-node \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+    echo 'export BUN_INSTALL="$HOME/.bun"' >> ~/.zshrc && \
+    echo 'export PATH="$BUN_INSTALL/bin:$PATH"' >> ~/.zshrc
 
 # Install Golang
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -50,14 +55,26 @@ RUN apt-get update && apt-get install -y \
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install ruff
-RUN /root/.cargo/bin/uv tool install ruff
+RUN /root/.local/bin/uv tool install ruff
 
 # Install Rust-based tools (via cargo)
 RUN . $HOME/.cargo/env && \
-    cargo install bat bat-extras fd-find ripgrep eza zoxide
+    cargo install bat fd-find ripgrep eza zoxide git-delta starship
+
+# Install bat-extras (bash scripts, not cargo)
+#RUN mkdir -p /tmp/bat-extras && \
+#    for i in 1 2 3; do \
+#        git clone --depth 1 https://github.com/eth-p/bat-extras.git /tmp/bat-extras && break || sleep 5; \
+#    done && \
+#    cd /tmp/bat-extras && \
+#    ./build.sh --install && \
+#    cd && \
+#    rm -rf /tmp/bat-extras
 
 # Install fzf
-RUN git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && \
+RUN for i in 1 2 3; do \
+        git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && break || sleep 5; \
+    done && \
     ~/.fzf/install --all
 
 # Install jq, yq, and other tools
@@ -98,17 +115,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Jujutsu (jj)
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "amd64" ]; then JJ_ARCH="x86_64"; \
-    elif [ "$ARCH" = "arm64" ]; then JJ_ARCH="aarch64"; \
-    else JJ_ARCH="x86_64"; fi && \
-    JJ_VERSION=$(curl -s https://api.github.com/repos/martinvonz/jj/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/') && \
-    wget -q https://github.com/martinvonz/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${JJ_ARCH}-unknown-linux-musl.tar.gz && \
-    tar -xzf jj-v${JJ_VERSION}-${JJ_ARCH}-unknown-linux-musl.tar.gz && \
-    mv jj /usr/local/bin/ && \
-    rm jj-v${JJ_VERSION}-${JJ_ARCH}-unknown-linux-musl.tar.gz && \
-    chmod +x /usr/local/bin/jj
+# Install Jujutsu (jj) - using cargo for reliability
+RUN . $HOME/.cargo/env && \
+    cargo install --git https://github.com/martinvonz/jj.git --locked jj-cli
 
 # Install chezmoi
 RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
@@ -122,11 +131,15 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 # Configure zsh with useful plugins and settings
 RUN echo 'eval "$(zoxide init zsh)"' >> ~/.zshrc && \
     echo 'source ~/.fzf.zsh' >> ~/.zshrc && \
+    echo 'eval "$(starship init zsh)"' >> ~/.zshrc && \
     echo 'alias ls="eza"' >> ~/.zshrc && \
     echo 'alias cat="bat"' >> ~/.zshrc && \
     echo 'alias find="fd"' >> ~/.zshrc && \
     echo 'alias grep="rg"' >> ~/.zshrc && \
     echo 'export EDITOR=nvim' >> ~/.zshrc
+
+# Install Claude Code
+RUN npm install -g @anthropic-ai/claude-code
 
 # Set working directory
 WORKDIR /workspace
