@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     lsb-release \
     pkg-config \
+    procps \
     software-properties-common \
     unzip \
     wget \
