@@ -27,6 +27,14 @@ The `dx` script automatically detects and uses either Docker or Apple's `contain
 - `build.sh` - builds images with runtime detection
 - Both scripts share the same `detect_runtime()` pattern
 
+### Container Naming
+Containers are automatically named based on the current working directory and version control branch (dx:59-78):
+- Format: `dx-<project>-<branch>`
+- Project name extracted from current directory basename
+- Branch detected from jj (preferred) or git
+- Names sanitized to contain only alphanumeric, underscore, period, and hyphen characters
+- Example: `dx-myapp-feature-auth` for project "myapp" on branch "feature-auth"
+
 ### File Mounting Strategy
 The project handles file mounting differently based on the container runtime:
 
@@ -52,6 +60,15 @@ Always mounted from host:
 Environment variables passed through:
 - `TZ` - timezone (or auto-detected from `/etc/localtime`)
 - `ANTHROPIC_API_KEY` - for Claude Code authentication
+
+### Resource Allocation
+The container runs with default resource limits:
+- **CPUs**: 4 cores
+- **Memory**: 4GB
+
+These are set in `dx:76-83` with runtime-specific flags:
+- Docker: `--cpus=4 --memory=4g`
+- Apple Container: `--cpus=4 --memory=4G`
 
 ## Development Commands
 

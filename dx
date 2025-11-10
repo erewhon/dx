@@ -56,6 +56,27 @@ run_container() {
   # Get current directory
   local current_dir="$(pwd)"
 
+  # Generate container name based on project and branch
+  local project_name=$(basename "$current_dir")
+  local branch_name=""
+
+  # Try to get branch name (jj first, then git)
+  if command -v jj &>/dev/null && [ -d .jj ]; then
+    branch_name=$(jj log -r @ --no-graph -T 'bookmarks' 2>/dev/null | head -n1 | tr -d ' ')
+  elif command -v git &>/dev/null && [ -d .git ]; then
+    branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  fi
+
+  # Sanitize names for container naming (only alphanumeric, underscore, period, hyphen)
+  project_name=$(echo "$project_name" | sed 's/[^a-zA-Z0-9._-]/-/g')
+  branch_name=$(echo "$branch_name" | sed 's/[^a-zA-Z0-9._-]/-/g')
+
+  # Build container name
+  local container_name="dx-${project_name}"
+  if [ -n "$branch_name" ]; then
+    container_name="${container_name}-${branch_name}"
+  fi
+
   # Build run command based on runtime
   local run_cmd=""
 
@@ -69,9 +90,19 @@ run_container() {
   local common_opts=(
     "--rm"
     "-it"
+    "--name" "${container_name}"
     "-v" "${current_dir}:${WORKSPACE}"
     "-w" "${WORKSPACE}"
   )
+
+  # Resource allocation (4 CPUs, 4GB memory)
+  if [ "$runtime" = "container" ]; then
+    # Apple container syntax
+    common_opts+=("--cpus=4" "--memory=4G")
+  else
+    # Docker syntax
+    common_opts+=("--cpus=4" "--memory=4g")
+  fi
 
   # Startup script for copying files (used for Apple container workaround)
   local startup_script=""
