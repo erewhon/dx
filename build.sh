@@ -5,15 +5,46 @@
 #
 # Usage:
 #   ./build.sh                           # Build with local tag only
+#   ./build.sh --current-user            # Build with current user's UID/GID
 #   ./build.sh username                  # Build and tag for GitHub registry
 #   ./build.sh username v1.0.0           # Build with specific version tag
+#   ./build.sh --current-user username   # Build with current user and GitHub tags
 
 set -e
 
 IMAGE_NAME="dx"
-VERSION="${2:-latest}"
+VERSION="latest"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GITHUB_USER="${1:-}"
+GITHUB_USER=""
+USE_CURRENT_USER=false
+BUILD_ARGS=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --current-user)
+            USE_CURRENT_USER=true
+            shift
+            ;;
+        *)
+            if [ -z "$GITHUB_USER" ]; then
+                GITHUB_USER="$1"
+            else
+                VERSION="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Set build args for user if requested
+if [ "$USE_CURRENT_USER" = true ]; then
+    USER_UID=$(id -u)
+    USER_GID=$(id -g)
+    BUILD_ARGS+=("--build-arg" "USER_UID=${USER_UID}")
+    BUILD_ARGS+=("--build-arg" "USER_GID=${USER_GID}")
+    echo "Building with current user: UID=${USER_UID}, GID=${USER_GID}"
+fi
 
 # Detect which container runtime is available
 detect_runtime() {
@@ -49,9 +80,9 @@ build_image() {
     echo "Tags: ${tags[*]}"
 
     if [ "$runtime" = "container" ]; then
-        container build "${tags[@]}" "$SCRIPT_DIR"
+        container build "${tags[@]}" "${BUILD_ARGS[@]}" "$SCRIPT_DIR"
     else
-        docker build "${tags[@]}" "$SCRIPT_DIR"
+        docker build "${tags[@]}" "${BUILD_ARGS[@]}" "$SCRIPT_DIR"
     fi
 
     echo ""

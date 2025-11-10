@@ -80,7 +80,7 @@ run_container() {
   if [ "$runtime" = "container" ]; then
     # Create .dx directory for staging files
     mkdir -p "$HOME/.dx"
-    common_opts+=("-v" "$HOME/.dx:/root/.dx:ro")
+    common_opts+=("-v" "$HOME/.dx:/home/dx/.dx:ro")
 
     # Copy gitconfig
     if [ -f "$HOME/.gitconfig" ]; then
@@ -102,11 +102,11 @@ run_container() {
   else
     # Docker: direct file mounts work fine
     if [ -f "$HOME/.gitconfig" ]; then
-      common_opts+=("-v" "$HOME/.gitconfig:/root/.gitconfig:ro")
+      common_opts+=("-v" "$HOME/.gitconfig:/home/dx/.gitconfig:ro")
     fi
 
     if [ -f "$HOME/.claude.json" ]; then
-      common_opts+=("-v" "$HOME/.claude.json:/root/.claude.json")
+      common_opts+=("-v" "$HOME/.claude.json:/home/dx/.claude.json")
     fi
 
     # Pass through timezone
@@ -117,21 +117,21 @@ run_container() {
 
   # Mount .ssh directory (works for both)
   if [ -d "$HOME/.ssh" ]; then
-    common_opts+=("-v" "$HOME/.ssh:/root/.ssh:ro")
+    common_opts+=("-v" "$HOME/.ssh:/home/dx/.ssh:ro")
   fi
 
   # Create and mount .claude directory for persistent Claude Code settings
   mkdir -p "$HOME/.claude"
-  common_opts+=("-v" "$HOME/.claude:/root/.claude")
+  common_opts+=("-v" "$HOME/.claude:/home/dx/.claude")
 
   # Create and mount .cache directory for persistent caching
   if [ -d "$HOME/.cache" ]; then
-    common_opts+=("-v" "$HOME/.cache:/root/.cache")
+    common_opts+=("-v" "$HOME/.cache:/home/dx/.cache")
   fi
 
   # Mount .config directory read-only
   if [ -d "$HOME/.config" ]; then
-    common_opts+=("-v" "$HOME/.config:/root/.config:ro")
+    common_opts+=("-v" "$HOME/.config:/home/dx/.config:ro")
   fi
 
   # Pass through TZ environment variable if set
