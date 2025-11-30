@@ -1,62 +1,100 @@
 #!/bin/bash
 
-# dx - Developer shell wrapper for Docker/Container
-# Supports both Docker and Apple's container command
+# dx - Developer shell wrapper for Docker/Container/systemd-nspawn
+# Supports Docker, Apple's container command, and systemd-nspawn
 
 set -e
 
 IMAGE_NAME="dx:latest"
+NSPAWN_TEMPLATE="/var/lib/machines/dx-template"
 WORKSPACE="/workspace"
+RESTRICT_NETWORK=false
+
+# Whitelisted domains for --restrict-network mode
+# These are resolved to IPs at container startup
+NETWORK_WHITELIST=(
+  # DNS servers (required for resolution)
+  "1.1.1.1"
+  "8.8.8.8"
+  # npm registry
+  "registry.npmjs.org"
+  "registry.yarnpkg.com"
+  # Rust/Cargo
+  "crates.io"
+  "static.crates.io"
+  "index.crates.io"
+  # Python/PyPI
+  "pypi.org"
+  "files.pythonhosted.org"
+  # Go modules
+  "proxy.golang.org"
+  "sum.golang.org"
+  # GitHub (for git dependencies)
+  "github.com"
+  "api.github.com"
+  "raw.githubusercontent.com"
+  "objects.githubusercontent.com"
+  "codeload.github.com"
+  # Ubuntu/Debian apt
+  "deb.debian.org"
+  "security.debian.org"
+  "archive.ubuntu.com"
+  "security.ubuntu.com"
+)
 
 # Detect which container runtime is available
+# Priority: systemd-nspawn > Apple container > Docker
 detect_runtime() {
-  if command -v container &>/dev/null; then
+  if command -v systemd-nspawn &>/dev/null && [ -d "$NSPAWN_TEMPLATE" ]; then
+    echo "nspawn"
+  elif command -v container &>/dev/null; then
     echo "container"
   elif command -v docker &>/dev/null; then
     echo "docker"
   else
-    echo "error: neither 'container' nor 'docker' command found" >&2
-    echo "Please install Docker Desktop or Apple's container tools" >&2
+    echo "error: no container runtime found" >&2
+    echo "Please install Docker Desktop, Apple's container tools, or systemd-nspawn" >&2
     exit 1
   fi
 }
 
-# Check if the image exists
+# Check if the image/template exists
 check_image() {
   local runtime=$1
 
-  if [ "$runtime" = "container" ]; then
+  if [ "$runtime" = "nspawn" ]; then
+    [ -d "$NSPAWN_TEMPLATE" ]
+  elif [ "$runtime" = "container" ]; then
     container image ls | grep -q "dx.*latest" 2>/dev/null
   else
     docker image ls | grep -q "^dx" 2>/dev/null
   fi
 }
 
-# Build the image if it doesn't exist
+# Build the image/template if it doesn't exist
 ensure_image() {
   local runtime=$1
 
   if ! check_image "$runtime"; then
-    echo "Image '${IMAGE_NAME}' not found. Building..."
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    if [ "$runtime" = "container" ]; then
+    if [ "$runtime" = "nspawn" ]; then
+      echo "nspawn template not found at ${NSPAWN_TEMPLATE}"
+      echo "Build it with: sudo ${SCRIPT_DIR}/build-nspawn.sh"
+      exit 1
+    elif [ "$runtime" = "container" ]; then
+      echo "Image '${IMAGE_NAME}' not found. Building..."
       container build -t "${IMAGE_NAME}" "$SCRIPT_DIR"
     else
+      echo "Image '${IMAGE_NAME}' not found. Building..."
       docker build -t "${IMAGE_NAME}" "$SCRIPT_DIR"
     fi
   fi
 }
 
-# Run the container
-run_container() {
-  local runtime=$1
-  shift
-
-  # Get current directory
+# Generate container name based on current directory and branch
+generate_container_name() {
   local current_dir="$(pwd)"
-
-  # Generate container name based on project and branch
   local project_name=$(basename "$current_dir")
   local branch_name=""
 
@@ -76,6 +114,137 @@ run_container() {
   if [ -n "$branch_name" ]; then
     container_name="${container_name}-${branch_name}"
   fi
+
+  echo "$container_name"
+}
+
+# Run using systemd-nspawn in ephemeral mode with systemd boot
+run_nspawn() {
+  local current_dir="$(pwd)"
+  local container_name=$(generate_container_name)
+
+  # Check if a container with this name is already running
+  if machinectl list --no-legend 2>/dev/null | grep -q "^${container_name} "; then
+    # Attach to existing container using machinectl shell
+    if [ $# -eq 0 ]; then
+      sudo machinectl shell dx@"${container_name}" /bin/zsh -c "cd ${WORKSPACE} && exec zsh"
+    else
+      sudo machinectl shell dx@"${container_name}" /bin/zsh -c "cd ${WORKSPACE} && $*"
+    fi
+    return
+  fi
+
+  # Build nspawn options for booted container
+  local nspawn_opts=(
+    "--ephemeral"                                    # Ephemeral mode - changes discarded on exit
+    "--boot"                                         # Boot systemd inside container
+    "--machine=${container_name}"                   # Container name
+    "--bind=${current_dir}:${WORKSPACE}"            # Mount current directory
+  )
+
+  # Mount .ssh directory (read-only)
+  if [ -d "$HOME/.ssh" ]; then
+    nspawn_opts+=("--bind-ro=$HOME/.ssh:/home/dx/.ssh")
+  fi
+
+  # Mount .claude directory for persistent Claude Code settings
+  mkdir -p "$HOME/.claude"
+  nspawn_opts+=("--bind=$HOME/.claude:/home/dx/.claude")
+
+  # Mount .cache directory for persistent caching
+  if [ -d "$HOME/.cache" ]; then
+    nspawn_opts+=("--bind=$HOME/.cache:/home/dx/.cache")
+  fi
+
+  # Mount .config directory read-only
+  if [ -d "$HOME/.config" ]; then
+    nspawn_opts+=("--bind-ro=$HOME/.config:/home/dx/.config")
+  fi
+
+  # Mount gitconfig (read-only)
+  if [ -f "$HOME/.gitconfig" ]; then
+    nspawn_opts+=("--bind-ro=$HOME/.gitconfig:/home/dx/.gitconfig")
+  fi
+
+  # Mount claude.json
+  if [ -f "$HOME/.claude.json" ]; then
+    nspawn_opts+=("--bind=$HOME/.claude.json:/home/dx/.claude.json")
+  fi
+
+  # Mount timezone
+  if [ -z "$TZ" ] && [ -f /etc/localtime ]; then
+    nspawn_opts+=("--bind-ro=/etc/localtime:/etc/localtime")
+  fi
+
+  # Environment variables need to be set via drop-in for booted containers
+  # Create a temporary environment file
+  local env_file=""
+  if [ -n "$TZ" ] || [ -n "$ANTHROPIC_API_KEY" ]; then
+    env_file=$(mktemp)
+    echo "[Service]" > "$env_file"
+    [ -n "$TZ" ] && echo "Environment=TZ=$TZ" >> "$env_file"
+    [ -n "$ANTHROPIC_API_KEY" ] && echo "Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$env_file"
+  fi
+
+  # Start the container in the background with systemd boot
+  sudo systemd-nspawn "${nspawn_opts[@]}" -D "$NSPAWN_TEMPLATE" &
+  local nspawn_pid=$!
+
+  # Wait for the container to be ready (systemd booted and dbus available)
+  echo "Starting container ${container_name}..."
+  local max_wait=30
+  local waited=0
+  while [ $waited -lt $max_wait ]; do
+    if machinectl list --no-legend 2>/dev/null | grep -q "^${container_name} "; then
+      # Check if we can connect
+      if sudo machinectl shell dx@"${container_name}" /bin/true 2>/dev/null; then
+        break
+      fi
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+
+  if [ $waited -ge $max_wait ]; then
+    echo "error: timed out waiting for container to start" >&2
+    kill $nspawn_pid 2>/dev/null
+    exit 1
+  fi
+
+  # Set environment variables inside the container for the dx user
+  if [ -n "$TZ" ]; then
+    sudo machinectl shell dx@"${container_name}" /bin/bash -c "echo 'export TZ=$TZ' >> ~/.zshrc.local" 2>/dev/null || true
+  fi
+  if [ -n "$ANTHROPIC_API_KEY" ]; then
+    sudo machinectl shell dx@"${container_name}" /bin/bash -c "echo 'export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY' >> ~/.zshrc.local" 2>/dev/null || true
+  fi
+
+  # Clean up temp file
+  [ -n "$env_file" ] && rm -f "$env_file"
+
+  # Set up network restrictions if requested
+  if [ "$RESTRICT_NETWORK" = true ]; then
+    setup_network_restrictions "${container_name}"
+  fi
+
+  # Now attach to the container
+  if [ $# -eq 0 ]; then
+    sudo machinectl shell dx@"${container_name}" /bin/zsh -c "cd ${WORKSPACE} && exec zsh"
+  else
+    sudo machinectl shell dx@"${container_name}" /bin/zsh -c "cd ${WORKSPACE} && $*"
+  fi
+
+  # When the shell exits, terminate the container
+  sudo machinectl terminate "${container_name}" 2>/dev/null || true
+}
+
+# Run using Docker or Apple container
+run_container() {
+  local runtime=$1
+  shift
+
+  local current_dir="$(pwd)"
+  local container_name=$(generate_container_name)
 
   # Build run command based on runtime
   local run_cmd=""
@@ -183,11 +352,106 @@ run_container() {
   fi
 }
 
+# Resolve domain to IP addresses
+resolve_domain() {
+  local domain=$1
+  # If it's already an IP, return it
+  if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "$domain"
+    return
+  fi
+  # Resolve domain to IPs (may return multiple)
+  getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true
+}
+
+# Set up network restrictions using iptables inside the container
+setup_network_restrictions() {
+  local container_name=$1
+
+  echo "Setting up network restrictions..."
+
+  # Build list of allowed IPs from whitelist
+  local allowed_ips=()
+  for entry in "${NETWORK_WHITELIST[@]}"; do
+    local ips=$(resolve_domain "$entry")
+    for ip in $ips; do
+      allowed_ips+=("$ip")
+    done
+  done
+
+  # Remove duplicates
+  local unique_ips=($(printf '%s\n' "${allowed_ips[@]}" | sort -u))
+
+  # Create iptables rules script
+  local rules_script="
+# Flush existing OUTPUT rules
+iptables -F OUTPUT 2>/dev/null || true
+
+# Allow loopback
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow established connections
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow DNS (UDP and TCP port 53)
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+"
+
+  # Add rules for each allowed IP
+  for ip in "${unique_ips[@]}"; do
+    rules_script+="iptables -A OUTPUT -d $ip -j ACCEPT
+"
+  done
+
+  # Default deny for OUTPUT
+  rules_script+="
+# Log and drop everything else
+iptables -A OUTPUT -j LOG --log-prefix 'DX-BLOCKED: ' --log-level 4 2>/dev/null || true
+iptables -A OUTPUT -j REJECT --reject-with icmp-net-prohibited
+"
+
+  # Execute the rules inside the container
+  sudo machinectl shell root@"${container_name}" /bin/bash -c "$rules_script" 2>/dev/null
+
+  echo "Network restricted to whitelisted domains only."
+}
+
 # Main execution
 main() {
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --restrict-network)
+        RESTRICT_NETWORK=true
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        echo "Usage: dx [--restrict-network] [command]" >&2
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
   local runtime=$(detect_runtime)
   ensure_image "$runtime"
-  run_container "$runtime" "$@"
+
+  if [ "$runtime" = "nspawn" ]; then
+    run_nspawn "$@"
+  else
+    if [ "$RESTRICT_NETWORK" = true ]; then
+      echo "Warning: --restrict-network is only supported with systemd-nspawn runtime" >&2
+    fi
+    run_container "$runtime" "$@"
+  fi
 }
 
 main "$@"
