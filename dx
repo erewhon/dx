@@ -9,6 +9,14 @@ IMAGE_NAME="dx:latest"
 NSPAWN_TEMPLATE="/var/lib/machines/dx-template"
 WORKSPACE="/workspace"
 RESTRICT_NETWORK=false
+VERBOSE=false
+
+# Verbose logging helper
+verbose() {
+  if [ "$VERBOSE" = true ]; then
+    echo "[dx] $*" >&2
+  fi
+}
 
 # Whitelisted domains for --restrict-network mode
 # These are resolved to IPs at container startup
@@ -145,35 +153,42 @@ run_nspawn() {
   # Mount .ssh directory (read-only)
   if [ -d "$HOME/.ssh" ]; then
     nspawn_opts+=("--bind-ro=$HOME/.ssh:/home/dx/.ssh")
+    verbose "Mount: $HOME/.ssh -> /home/dx/.ssh (ro)"
   fi
 
   # Mount .claude directory for persistent Claude Code settings
   mkdir -p "$HOME/.claude"
   nspawn_opts+=("--bind=$HOME/.claude:/home/dx/.claude")
+  verbose "Mount: $HOME/.claude -> /home/dx/.claude (rw)"
 
   # Mount .cache directory for persistent caching
   if [ -d "$HOME/.cache" ]; then
     nspawn_opts+=("--bind=$HOME/.cache:/home/dx/.cache")
+    verbose "Mount: $HOME/.cache -> /home/dx/.cache (rw)"
   fi
 
   # Mount .config directory read-only
   if [ -d "$HOME/.config" ]; then
     nspawn_opts+=("--bind-ro=$HOME/.config:/home/dx/.config")
+    verbose "Mount: $HOME/.config -> /home/dx/.config (ro)"
   fi
 
   # Mount gitconfig (read-only)
   if [ -f "$HOME/.gitconfig" ]; then
     nspawn_opts+=("--bind-ro=$HOME/.gitconfig:/home/dx/.gitconfig")
+    verbose "Mount: $HOME/.gitconfig -> /home/dx/.gitconfig (ro)"
   fi
 
   # Mount claude.json
   if [ -f "$HOME/.claude.json" ]; then
     nspawn_opts+=("--bind=$HOME/.claude.json:/home/dx/.claude.json")
+    verbose "Mount: $HOME/.claude.json -> /home/dx/.claude.json (rw)"
   fi
 
   # Mount timezone
   if [ -z "$TZ" ] && [ -f /etc/localtime ]; then
     nspawn_opts+=("--bind-ro=/etc/localtime:/etc/localtime")
+    verbose "Mount: /etc/localtime -> /etc/localtime (ro)"
   fi
 
   # Environment variables need to be set via drop-in for booted containers
@@ -182,8 +197,14 @@ run_nspawn() {
   if [ -n "$TZ" ] || [ -n "$ANTHROPIC_API_KEY" ]; then
     env_file=$(mktemp)
     echo "[Service]" > "$env_file"
-    [ -n "$TZ" ] && echo "Environment=TZ=$TZ" >> "$env_file"
-    [ -n "$ANTHROPIC_API_KEY" ] && echo "Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$env_file"
+    if [ -n "$TZ" ]; then
+      echo "Environment=TZ=$TZ" >> "$env_file"
+      verbose "Environment: TZ=$TZ"
+    fi
+    if [ -n "$ANTHROPIC_API_KEY" ]; then
+      echo "Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$env_file"
+      verbose "Environment: ANTHROPIC_API_KEY=<set>"
+    fi
   fi
 
   # Start the container in the background with systemd boot
@@ -268,9 +289,11 @@ run_container() {
   if [ "$runtime" = "container" ]; then
     # Apple container syntax
     common_opts+=("--cpus=4" "--memory=4G")
+    verbose "Resources: 4 CPUs, 4GB memory"
   else
     # Docker syntax
     common_opts+=("--cpus=4" "--memory=4g")
+    verbose "Resources: 4 CPUs, 4GB memory"
   fi
 
   # Startup script for copying files (used for Apple container workaround)
@@ -281,73 +304,91 @@ run_container() {
     # Create .dx directory for staging files
     mkdir -p "$HOME/.dx"
     common_opts+=("-v" "$HOME/.dx:/home/dx/.dx:ro")
+    verbose "Mount: $HOME/.dx -> /home/dx/.dx (ro, staging)"
 
     # Copy gitconfig
     if [ -f "$HOME/.gitconfig" ]; then
       cp "$HOME/.gitconfig" "$HOME/.dx/gitconfig"
       startup_script+="cp ~/.dx/gitconfig ~/.gitconfig 2>/dev/null || true; "
+      verbose "Staged: .gitconfig (copied at startup)"
     fi
 
     # Copy claude.json
     if [ -f "$HOME/.claude.json" ]; then
       cp "$HOME/.claude.json" "$HOME/.dx/claude.json"
       startup_script+="cp ~/.dx/claude.json ~/.claude.json 2>/dev/null || true; "
+      verbose "Staged: .claude.json (copied at startup)"
     fi
 
     # Copy localtime for timezone
     if [ -z "$TZ" ] && [ -f /etc/localtime ]; then
       cp /etc/localtime "$HOME/.dx/localtime"
       startup_script+="sudo cp ~/.dx/localtime /etc/localtime 2>/dev/null || cp ~/.dx/localtime /etc/localtime 2>/dev/null || true; "
+      verbose "Staged: localtime (copied at startup)"
     fi
   else
     # Docker: direct file mounts work fine
     if [ -f "$HOME/.gitconfig" ]; then
       common_opts+=("-v" "$HOME/.gitconfig:/home/dx/.gitconfig:ro")
+      verbose "Mount: $HOME/.gitconfig -> /home/dx/.gitconfig (ro)"
     fi
 
     if [ -f "$HOME/.claude.json" ]; then
       common_opts+=("-v" "$HOME/.claude.json:/home/dx/.claude.json")
+      verbose "Mount: $HOME/.claude.json -> /home/dx/.claude.json (rw)"
     fi
 
     # Pass through timezone
     if [ -z "$TZ" ] && [ -f /etc/localtime ]; then
       common_opts+=("-v" "/etc/localtime:/etc/localtime:ro")
+      verbose "Mount: /etc/localtime -> /etc/localtime (ro)"
     fi
   fi
 
   # Mount .ssh directory (works for both)
   if [ -d "$HOME/.ssh" ]; then
     common_opts+=("-v" "$HOME/.ssh:/home/dx/.ssh:ro")
+    verbose "Mount: $HOME/.ssh -> /home/dx/.ssh (ro)"
   fi
 
   # Create and mount .claude directory for persistent Claude Code settings
   mkdir -p "$HOME/.claude"
   common_opts+=("-v" "$HOME/.claude:/home/dx/.claude")
+  verbose "Mount: $HOME/.claude -> /home/dx/.claude (rw)"
 
   # Create and mount .cache directory for persistent caching
   if [ -d "$HOME/.cache" ]; then
     common_opts+=("-v" "$HOME/.cache:/home/dx/.cache")
+    verbose "Mount: $HOME/.cache -> /home/dx/.cache (rw)"
   fi
 
   # Mount .config directory read-only
   if [ -d "$HOME/.config" ]; then
     common_opts+=("-v" "$HOME/.config:/home/dx/.config:ro")
+    verbose "Mount: $HOME/.config -> /home/dx/.config (ro)"
   fi
 
   # Pass through TZ environment variable if set
   if [ -n "$TZ" ]; then
     common_opts+=("-e" "TZ=$TZ")
+    verbose "Environment: TZ=$TZ"
   fi
 
   # Pass through ANTHROPIC_API_KEY if set
   if [ -n "$ANTHROPIC_API_KEY" ]; then
     common_opts+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+    verbose "Environment: ANTHROPIC_API_KEY=<set>"
   fi
 
   # If arguments provided, run as command; otherwise start zsh
+  verbose "Image: $IMAGE_NAME"
   if [ $# -eq 0 ]; then
+    verbose "Command: interactive shell"
+    verbose "Starting container..."
     $run_cmd "${common_opts[@]}" "${IMAGE_NAME}" /bin/zsh -c "${startup_script}exec zsh"
   else
+    verbose "Command: $*"
+    verbose "Starting container..."
     $run_cmd "${common_opts[@]}" "${IMAGE_NAME}" /bin/zsh -c "${startup_script}$*"
   fi
 }
@@ -422,6 +463,10 @@ main() {
   # Parse flags
   while [[ $# -gt 0 ]]; do
     case $1 in
+      -v|--verbose)
+        VERBOSE=true
+        shift
+        ;;
       --restrict-network)
         RESTRICT_NETWORK=true
         shift
@@ -432,7 +477,7 @@ main() {
         ;;
       -*)
         echo "Unknown option: $1" >&2
-        echo "Usage: dx [--restrict-network] [command]" >&2
+        echo "Usage: dx [-v|--verbose] [--restrict-network] [command]" >&2
         exit 1
         ;;
       *)
@@ -442,7 +487,13 @@ main() {
   done
 
   local runtime=$(detect_runtime)
+  verbose "Detected runtime: $runtime"
   ensure_image "$runtime"
+
+  local container_name=$(generate_container_name)
+  verbose "Container name: $container_name"
+  verbose "Working directory: $(pwd)"
+  verbose "Workspace mount: $(pwd) -> $WORKSPACE"
 
   if [ "$runtime" = "nspawn" ]; then
     run_nspawn "$@"

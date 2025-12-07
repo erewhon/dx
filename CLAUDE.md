@@ -152,12 +152,19 @@ The template is created as a btrfs subvolume at `/var/lib/machines/dx-template`.
 # Execute compound commands (quote them)
 ./dx "npm install && npm test"
 
+# Run with verbose output (shows runtime, mounts, environment)
+./dx -v
+./dx --verbose
+
 # Run with network restrictions (systemd-nspawn only)
 # Only allows connections to package registries and GitHub
 ./dx --restrict-network
 
 # Run command with network restrictions
 ./dx --restrict-network "npm install"
+
+# Combine flags
+./dx -v --restrict-network "npm install"
 ```
 
 ### Publishing to GHCR
