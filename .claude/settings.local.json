@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(chmod:*)",
-      "Bash(./build.sh:*)"
+      "Bash(./build.sh:*)",
+      "WebFetch(domain:idle.nprescott.com)"
     ],
     "deny": [],
     "ask": []
