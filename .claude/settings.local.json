@@ -3,7 +3,10 @@
     "allow": [
       "Bash(chmod:*)",
       "Bash(./build.sh:*)",
-      "WebFetch(domain:idle.nprescott.com)"
+      "WebFetch(domain:idle.nprescott.com)",
+      "Bash(command -v:*)",
+      "Bash([ -d /var/lib/machines/dx-template ])",
+      "Bash(sudo ls:*)"
     ],
     "deny": [],
     "ask": []

@@ -131,6 +131,12 @@ run_nspawn() {
   local current_dir="$(pwd)"
   local container_name=$(generate_container_name)
 
+  # When running under sudo, use the original user's home directory
+  local user_home="$HOME"
+  if [ -n "$SUDO_USER" ]; then
+    user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  fi
+
   # Check if a container with this name is already running
   if machinectl list --no-legend 2>/dev/null | grep -q "^${container_name} "; then
     # Attach to existing container using machinectl shell
@@ -151,38 +157,38 @@ run_nspawn() {
   )
 
   # Mount .ssh directory (read-only)
-  if [ -d "$HOME/.ssh" ]; then
-    nspawn_opts+=("--bind-ro=$HOME/.ssh:/home/dx/.ssh")
-    verbose "Mount: $HOME/.ssh -> /home/dx/.ssh (ro)"
+  if [ -d "$user_home/.ssh" ]; then
+    nspawn_opts+=("--bind-ro=$user_home/.ssh:/home/dx/.ssh")
+    verbose "Mount: $user_home/.ssh -> /home/dx/.ssh (ro)"
   fi
 
   # Mount .claude directory for persistent Claude Code settings
-  mkdir -p "$HOME/.claude"
-  nspawn_opts+=("--bind=$HOME/.claude:/home/dx/.claude")
-  verbose "Mount: $HOME/.claude -> /home/dx/.claude (rw)"
+  mkdir -p "$user_home/.claude"
+  nspawn_opts+=("--bind=$user_home/.claude:/home/dx/.claude")
+  verbose "Mount: $user_home/.claude -> /home/dx/.claude (rw)"
 
   # Mount .cache directory for persistent caching
-  if [ -d "$HOME/.cache" ]; then
-    nspawn_opts+=("--bind=$HOME/.cache:/home/dx/.cache")
-    verbose "Mount: $HOME/.cache -> /home/dx/.cache (rw)"
+  if [ -d "$user_home/.cache" ]; then
+    nspawn_opts+=("--bind=$user_home/.cache:/home/dx/.cache")
+    verbose "Mount: $user_home/.cache -> /home/dx/.cache (rw)"
   fi
 
   # Mount .config directory read-only
-  if [ -d "$HOME/.config" ]; then
-    nspawn_opts+=("--bind-ro=$HOME/.config:/home/dx/.config")
-    verbose "Mount: $HOME/.config -> /home/dx/.config (ro)"
+  if [ -d "$user_home/.config" ]; then
+    nspawn_opts+=("--bind-ro=$user_home/.config:/home/dx/.config")
+    verbose "Mount: $user_home/.config -> /home/dx/.config (ro)"
   fi
 
   # Mount gitconfig (read-only)
-  if [ -f "$HOME/.gitconfig" ]; then
-    nspawn_opts+=("--bind-ro=$HOME/.gitconfig:/home/dx/.gitconfig")
-    verbose "Mount: $HOME/.gitconfig -> /home/dx/.gitconfig (ro)"
+  if [ -f "$user_home/.gitconfig" ]; then
+    nspawn_opts+=("--bind-ro=$user_home/.gitconfig:/home/dx/.gitconfig")
+    verbose "Mount: $user_home/.gitconfig -> /home/dx/.gitconfig (ro)"
   fi
 
   # Mount claude.json
-  if [ -f "$HOME/.claude.json" ]; then
-    nspawn_opts+=("--bind=$HOME/.claude.json:/home/dx/.claude.json")
-    verbose "Mount: $HOME/.claude.json -> /home/dx/.claude.json (rw)"
+  if [ -f "$user_home/.claude.json" ]; then
+    nspawn_opts+=("--bind=$user_home/.claude.json:/home/dx/.claude.json")
+    verbose "Mount: $user_home/.claude.json -> /home/dx/.claude.json (rw)"
   fi
 
   # Mount timezone
